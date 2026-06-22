@@ -3,9 +3,10 @@
  *
  * 1. Records the current working directory as the shell's "home".
  * 2. Enters a loop:
- *    a) Display the prompt                      (prompt.c — A.1)
- *    b) Read a line of user input               (input.c  — A.2)
- *    c) Validate the input against the grammar  (parser.c — A.3)
+ *    a) Display the prompt                      (prompt.c  — A.1)
+ *    b) Read a line of user input               (input.c   — A.2)
+ *    c) Validate the input against the grammar  (parser.c  — A.3)
+ *    d) Execute the validated command            (execute.c — B)
  * 3. Exits on EOF (Ctrl-D).
  */
 
@@ -18,19 +19,23 @@
 #include "prompt.h"
 #include "input.h"
 #include "parser.h"
+#include "execute.h"
 
 int main(void)
 {
-    /* Save the directory in which the shell was started (shell home) */
-    char *shell_home = getcwd(NULL, 0);
-    if (shell_home == NULL) {
+    /* Initialise shell state */
+    ShellState state;
+    state.shell_home = getcwd(NULL, 0);
+    state.prev_cwd   = NULL;
+
+    if (state.shell_home == NULL) {
         perror("getcwd");
         return 1;
     }
 
     /* ---- REPL loop ---- */
     for (;;) {
-        display_prompt(shell_home);
+        display_prompt(state.shell_home);
 
         char *line = read_input();
         if (line == NULL) {
@@ -58,11 +63,17 @@ int main(void)
         /* Validate the input against the shell grammar (A.3) */
         if (!validate_input(line)) {
             printf("Invalid Syntax!\n");
+            free(line);
+            continue;
         }
+
+        /* Execute the validated command (B) */
+        execute_line(line, &state);
 
         free(line);
     }
 
-    free(shell_home);
+    free(state.shell_home);
+    free(state.prev_cwd);
     return 0;
 }

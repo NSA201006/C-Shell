@@ -1,4 +1,4 @@
-# Makefile for the C Shell (Part A)
+# Makefile for the C Shell
 #
 # Layout:
 #   include/  — header files (.h)
@@ -23,15 +23,13 @@ SRCDIR  = src
 OBJDIR  = obj
 INCDIR  = include
 
-SRCS    = $(SRCDIR)/main.c \
-          $(SRCDIR)/prompt.c \
-          $(SRCDIR)/input.c \
-          $(SRCDIR)/parser.c
-
 OBJS    = $(OBJDIR)/main.o \
           $(OBJDIR)/prompt.o \
           $(OBJDIR)/input.o \
-          $(OBJDIR)/parser.o
+          $(OBJDIR)/parser.o \
+          $(OBJDIR)/execute.o \
+          $(OBJDIR)/hop.o \
+          $(OBJDIR)/reveal.o
 
 TARGET  = shell.out
 
@@ -52,7 +50,10 @@ clean:
 	rm -f $(OBJS) $(TARGET)
 
 # Header dependencies
-$(OBJDIR)/main.o:   $(SRCDIR)/main.c   $(INCDIR)/types.h $(INCDIR)/prompt.h $(INCDIR)/input.h $(INCDIR)/parser.h
-$(OBJDIR)/prompt.o: $(SRCDIR)/prompt.c $(INCDIR)/types.h $(INCDIR)/prompt.h
-$(OBJDIR)/input.o:  $(SRCDIR)/input.c  $(INCDIR)/input.h
-$(OBJDIR)/parser.o: $(SRCDIR)/parser.c $(INCDIR)/types.h $(INCDIR)/parser.h
+$(OBJDIR)/main.o:    $(SRCDIR)/main.c    $(INCDIR)/types.h $(INCDIR)/prompt.h $(INCDIR)/input.h $(INCDIR)/parser.h $(INCDIR)/execute.h
+$(OBJDIR)/prompt.o:  $(SRCDIR)/prompt.c  $(INCDIR)/types.h $(INCDIR)/prompt.h
+$(OBJDIR)/input.o:   $(SRCDIR)/input.c   $(INCDIR)/input.h
+$(OBJDIR)/parser.o:  $(SRCDIR)/parser.c  $(INCDIR)/types.h $(INCDIR)/parser.h
+$(OBJDIR)/execute.o: $(SRCDIR)/execute.c $(INCDIR)/types.h $(INCDIR)/execute.h $(INCDIR)/hop.h $(INCDIR)/reveal.h
+$(OBJDIR)/hop.o:     $(SRCDIR)/hop.c     $(INCDIR)/types.h $(INCDIR)/hop.h
+$(OBJDIR)/reveal.o:  $(SRCDIR)/reveal.c  $(INCDIR)/types.h $(INCDIR)/reveal.h

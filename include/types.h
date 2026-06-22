@@ -52,4 +52,18 @@ typedef struct {
     char     *value;   /* heap-allocated for TOKEN_WORD; NULL otherwise */
 } Token;
 
+/* Maximum number of arguments in a single command */
+#define MAX_ARGS     256
+
+/*
+ * ShellState — Persistent state shared across all shell modules.
+ *
+ * shell_home: absolute path of the directory where the shell started.
+ * prev_cwd:   previous working directory (NULL until the first hop).
+ */
+typedef struct {
+    char *shell_home;
+    char *prev_cwd;
+} ShellState;
+
 #endif /* TYPES_H */
