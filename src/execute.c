@@ -7,9 +7,11 @@
  * via fork + execvp.
  */
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -127,31 +129,48 @@ static int build_exec_argv(int argc, char **argv, char **exec_argv)
  * setup_redirections — Handle <, >, >> in the argv before exec.
  *                      Must be called in the child process.
  *
+ * Uses open() + dup2() + close() as required by the spec.
+ * When multiple input (or output) redirections are present,
+ * only the last one takes effect (left-to-right processing
+ * with each dup2 overwriting the previous).
+ *
  * Returns 0 on success, -1 on failure.
  */
 static int setup_redirections(int argc, char **argv)
 {
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "<") == 0 && i + 1 < argc) {
-            FILE *fp = freopen(argv[i + 1], "r", stdin);
-            if (fp == NULL) {
-                perror(argv[i + 1]);
+            /* Input redirection: open with O_RDONLY */
+            int fd = open(argv[i + 1], O_RDONLY);
+            if (fd < 0) {
+                printf("No such file or directory\n");
+                fflush(stdout);
                 return -1;
             }
+            dup2(fd, STDIN_FILENO);
+            close(fd);
             i++;
         } else if (strcmp(argv[i], ">>") == 0 && i + 1 < argc) {
-            FILE *fp = freopen(argv[i + 1], "a", stdout);
-            if (fp == NULL) {
+            /* Output append: O_WRONLY | O_CREAT | O_APPEND */
+            int fd = open(argv[i + 1],
+                          O_WRONLY | O_CREAT | O_APPEND, 0644);
+            if (fd < 0) {
                 perror(argv[i + 1]);
                 return -1;
             }
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
             i++;
         } else if (strcmp(argv[i], ">") == 0 && i + 1 < argc) {
-            FILE *fp = freopen(argv[i + 1], "w", stdout);
-            if (fp == NULL) {
+            /* Output truncate: O_WRONLY | O_CREAT | O_TRUNC */
+            int fd = open(argv[i + 1],
+                          O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd < 0) {
                 perror(argv[i + 1]);
                 return -1;
             }
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
             i++;
         }
     }
