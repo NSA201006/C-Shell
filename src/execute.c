@@ -3,20 +3,25 @@
  *
  * Splits a validated input line into individual commands
  * (delimited by ';' and '&'), tokenises each into an argv array,
- * and dispatches recognised builtins (hop, reveal).
+ * and dispatches recognised builtins or runs external commands
+ * via fork + execvp.
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "execute.h"
 #include "hop.h"
+#include "log.h"
 #include "reveal.h"
 #include "types.h"
 
 /*
- * is_whitespace — Return non-zero if c is whitespace.
+ * is_ws — Return non-zero if c is whitespace.
  */
 static int is_ws(char c)
 {
@@ -24,8 +29,7 @@ static int is_ws(char c)
 }
 
 /*
- * is_meta — Return non-zero if c is a shell metacharacter
- *           (separator or redirection).
+ * is_meta — Return non-zero if c is a shell metacharacter.
  */
 static int is_meta(char c)
 {
@@ -37,11 +41,7 @@ static int is_meta(char c)
  * split_argv — Split a simple command string into an argv array.
  *
  * Words are delimited by whitespace and metacharacters.
- * Metacharacters (|, <, >, >>) are emitted as separate tokens
- * so that builtins can ignore them if needed.
- *
- * @cmd:   the command substring (will NOT be modified).
- * @argv:  output array (caller-provided, MAX_ARGS elements).
+ * Metacharacters (|, <, >, >>) are emitted as separate tokens.
  *
  * Returns the number of tokens (argc).
  * All argv entries are heap-allocated; caller must free them.
@@ -100,6 +100,98 @@ static void free_argv(char **argv, int argc)
 }
 
 /*
+ * build_exec_argv — From a full argv (which may contain <, >, >>),
+ *                   extract only the command and its plain arguments,
+ *                   skipping redirection tokens and their filenames.
+ *
+ * Returns a NULL-terminated array suitable for execvp().
+ * Entries are NOT duplicated — they point into the original argv.
+ */
+static int build_exec_argv(int argc, char **argv, char **exec_argv)
+{
+    int n = 0;
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "<") == 0 ||
+            strcmp(argv[i], ">") == 0 ||
+            strcmp(argv[i], ">>") == 0) {
+            i++;   /* skip the filename that follows */
+            continue;
+        }
+        exec_argv[n++] = argv[i];
+    }
+    exec_argv[n] = NULL;
+    return n;
+}
+
+/*
+ * setup_redirections — Handle <, >, >> in the argv before exec.
+ *                      Must be called in the child process.
+ *
+ * Returns 0 on success, -1 on failure.
+ */
+static int setup_redirections(int argc, char **argv)
+{
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "<") == 0 && i + 1 < argc) {
+            FILE *fp = freopen(argv[i + 1], "r", stdin);
+            if (fp == NULL) {
+                perror(argv[i + 1]);
+                return -1;
+            }
+            i++;
+        } else if (strcmp(argv[i], ">>") == 0 && i + 1 < argc) {
+            FILE *fp = freopen(argv[i + 1], "a", stdout);
+            if (fp == NULL) {
+                perror(argv[i + 1]);
+                return -1;
+            }
+            i++;
+        } else if (strcmp(argv[i], ">") == 0 && i + 1 < argc) {
+            FILE *fp = freopen(argv[i + 1], "w", stdout);
+            if (fp == NULL) {
+                perror(argv[i + 1]);
+                return -1;
+            }
+            i++;
+        }
+    }
+    return 0;
+}
+
+/*
+ * run_external — Fork and exec an external command.
+ */
+static void run_external(int argc, char **argv)
+{
+    /* Build a clean argv for execvp (without redirection tokens) */
+    char *exec_argv[MAX_ARGS];
+    int exec_argc = build_exec_argv(argc, argv, exec_argv);
+
+    if (exec_argc == 0)
+        return;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* Child process */
+        /* Set up redirections first */
+        if (setup_redirections(argc, argv) != 0)
+            _exit(1);
+
+        execvp(exec_argv[0], exec_argv);
+        /* If we reach here, exec failed */
+        printf("Command not found!\n");
+        fflush(stdout);
+        _exit(1);
+    } else if (pid > 0) {
+        /* Parent — wait for child */
+        int status;
+        waitpid(pid, &status, 0);
+    } else {
+        perror("fork");
+    }
+}
+
+/*
  * dispatch — Run a single simple command (argv[0] decides).
  */
 static void dispatch(int argc, char **argv, ShellState *state)
@@ -111,8 +203,11 @@ static void dispatch(int argc, char **argv, ShellState *state)
         builtin_hop(argc, argv, state);
     } else if (strcmp(argv[0], "reveal") == 0) {
         builtin_reveal(argc, argv, state);
+    } else if (strcmp(argv[0], "log") == 0) {
+        builtin_log(argc, argv, state);
+    } else {
+        run_external(argc, argv);
     }
-    /* Unknown commands are silently ignored for now (exec* banned). */
 }
 
 void execute_line(const char *line, ShellState *state)
@@ -129,22 +224,15 @@ void execute_line(const char *line, ShellState *state)
     int start = 0;
 
     for (int i = 0; i <= len; i++) {
-        /*
-         * We split on '&', ';', or end-of-string.
-         * Skip '>>' so we don't confuse '>' with a separator
-         * (but '>' is never a separator — only '&' and ';' are).
-         */
         if (i == len || copy[i] == '&' || copy[i] == ';') {
             /* Extract the substring [start, i) */
             char saved = copy[i];
             copy[i] = '\0';
 
-            /* Handle pipe groups: take only the first command
-             * in a pipeline for builtin dispatch.  Piped stages
-             * cannot run without exec*, so we just run the first. */
             char *segment = copy + start;
 
-            /* Find the first '|' in the segment */
+            /* Handle pipe groups: take only the first command
+             * in a pipeline for builtin dispatch. */
             char *pipe_pos = strchr(segment, '|');
             if (pipe_pos != NULL) {
                 *pipe_pos = '\0';

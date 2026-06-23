@@ -6,7 +6,8 @@
  *    a) Display the prompt                      (prompt.c  — A.1)
  *    b) Read a line of user input               (input.c   — A.2)
  *    c) Validate the input against the grammar  (parser.c  — A.3)
- *    d) Execute the validated command            (execute.c — B)
+ *    d) Store in log if appropriate              (log.c     — B.3)
+ *    e) Execute the validated command            (execute.c — B/C)
  * 3. Exits on EOF (Ctrl-D).
  */
 
@@ -20,6 +21,7 @@
 #include "input.h"
 #include "parser.h"
 #include "execute.h"
+#include "log.h"
 
 int main(void)
 {
@@ -27,6 +29,7 @@ int main(void)
     ShellState state;
     state.shell_home = getcwd(NULL, 0);
     state.prev_cwd   = NULL;
+    state.skip_log   = 0;
 
     if (state.shell_home == NULL) {
         perror("getcwd");
@@ -67,7 +70,14 @@ int main(void)
             continue;
         }
 
-        /* Execute the validated command (B) */
+        /* Store in log if appropriate (B.3):
+         * - Not during a "log execute" recall (skip_log flag)
+         * - Not if any atomic command in the line is "log" */
+        if (!state.skip_log && !contains_log_command(line)) {
+            log_add(line, state.shell_home);
+        }
+
+        /* Execute the validated command */
         execute_line(line, &state);
 
         free(line);

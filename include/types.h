@@ -55,15 +55,24 @@ typedef struct {
 /* Maximum number of arguments in a single command */
 #define MAX_ARGS     256
 
+/* Maximum number of commands stored in log history */
+#define MAX_LOG      15
+
+/* Name of the persistent history file (stored in shell_home) */
+#define LOG_FILE     ".shell_history"
+
 /*
  * ShellState — Persistent state shared across all shell modules.
  *
  * shell_home: absolute path of the directory where the shell started.
  * prev_cwd:   previous working directory (NULL until the first hop).
+ * skip_log:   when non-zero, do not store the current command in log
+ *             (used by log execute to prevent re-storing recalled cmds).
  */
 typedef struct {
     char *shell_home;
     char *prev_cwd;
+    int   skip_log;
 } ShellState;
 
 #endif /* TYPES_H */
