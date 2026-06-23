@@ -180,11 +180,50 @@ static int setup_redirections(int argc, char **argv)
 }
 
 /*
- * run_external — Fork and exec an external command.
+ * run_in_child — Execute a command in the current (child) process.
+ *
+ * Sets up file redirections, then either runs a builtin (and _exit)
+ * or calls execvp.  This function never returns.
  */
-static void run_external(int argc, char **argv)
+static void run_in_child(int argc, char **argv, ShellState *state)
 {
-    /* Build a clean argv for execvp (without redirection tokens) */
+    /* Set up file redirections (<, >, >>) */
+    if (setup_redirections(argc, argv) != 0)
+        _exit(1);
+
+    /* Build clean argv (strip redirection tokens) */
+    char *exec_argv[MAX_ARGS];
+    int exec_argc = build_exec_argv(argc, argv, exec_argv);
+
+    if (exec_argc == 0)
+        _exit(0);
+
+    /* Builtins — run in-process then exit */
+    if (strcmp(exec_argv[0], "hop") == 0) {
+        builtin_hop(exec_argc, exec_argv, state);
+        _exit(0);
+    }
+    if (strcmp(exec_argv[0], "reveal") == 0) {
+        builtin_reveal(exec_argc, exec_argv, state);
+        _exit(0);
+    }
+    if (strcmp(exec_argv[0], "log") == 0) {
+        builtin_log(exec_argc, exec_argv, state);
+        _exit(0);
+    }
+
+    /* External command */
+    execvp(exec_argv[0], exec_argv);
+    printf("Command not found!\n");
+    fflush(stdout);
+    _exit(1);
+}
+
+/*
+ * run_external — Fork and exec a single external command (no pipes).
+ */
+static void run_external(int argc, char **argv, ShellState *state)
+{
     char *exec_argv[MAX_ARGS];
     int exec_argc = build_exec_argv(argc, argv, exec_argv);
 
@@ -193,18 +232,9 @@ static void run_external(int argc, char **argv)
 
     pid_t pid = fork();
     if (pid == 0) {
-        /* Child process */
-        /* Set up redirections first */
-        if (setup_redirections(argc, argv) != 0)
-            _exit(1);
-
-        execvp(exec_argv[0], exec_argv);
-        /* If we reach here, exec failed */
-        printf("Command not found!\n");
-        fflush(stdout);
-        _exit(1);
+        run_in_child(argc, argv, state);
+        /* never reached */
     } else if (pid > 0) {
-        /* Parent — wait for child */
         int status;
         waitpid(pid, &status, 0);
     } else {
@@ -213,7 +243,8 @@ static void run_external(int argc, char **argv)
 }
 
 /*
- * dispatch — Run a single simple command (argv[0] decides).
+ * dispatch — Run a single simple command (no pipes).
+ *            Builtins run in the current process; externals are forked.
  */
 static void dispatch(int argc, char **argv, ShellState *state)
 {
@@ -227,7 +258,78 @@ static void dispatch(int argc, char **argv, ShellState *state)
     } else if (strcmp(argv[0], "log") == 0) {
         builtin_log(argc, argv, state);
     } else {
-        run_external(argc, argv);
+        run_external(argc, argv, state);
+    }
+}
+
+/*
+ * run_pipeline — Execute a pipeline of commands connected by pipes.
+ *
+ * Creates (n_cmds - 1) pipes, forks a child for each command,
+ * wires up stdin/stdout via dup2, and waits for all children.
+ *
+ * @stages:  array of command strings (one per pipeline stage).
+ * @n_cmds:  number of stages.
+ * @state:   shell state.
+ */
+static void run_pipeline(char **stages, int n_cmds, ShellState *state)
+{
+    /*
+     * Flat pipe fd array: pipefds[2*i] = read end of pipe i,
+     *                     pipefds[2*i+1] = write end of pipe i.
+     */
+    int n_pipes = n_cmds - 1;
+    int pipefds[2 * n_pipes];
+
+    for (int i = 0; i < n_pipes; i++) {
+        if (pipe(pipefds + 2 * i) < 0) {
+            perror("pipe");
+            return;
+        }
+    }
+
+    pid_t pids[MAX_ARGS];
+
+    for (int i = 0; i < n_cmds; i++) {
+        char *argv[MAX_ARGS];
+        int argc = split_argv(stages[i], argv);
+
+        pids[i] = fork();
+        if (pids[i] == 0) {
+            /* ---- Child process ---- */
+
+            /* Wire up pipe endpoints */
+            if (i > 0) {
+                /* Read from previous pipe */
+                dup2(pipefds[2 * (i - 1)], STDIN_FILENO);
+            }
+            if (i < n_pipes) {
+                /* Write to current pipe */
+                dup2(pipefds[2 * i + 1], STDOUT_FILENO);
+            }
+
+            /* Close ALL pipe fds in child */
+            for (int j = 0; j < 2 * n_pipes; j++)
+                close(pipefds[j]);
+
+            /* Set up file redirections and exec */
+            run_in_child(argc, argv, state);
+            /* never reached */
+        } else if (pids[i] < 0) {
+            perror("fork");
+        }
+
+        free_argv(argv, argc);
+    }
+
+    /* ---- Parent: close all pipe fds ---- */
+    for (int j = 0; j < 2 * n_pipes; j++)
+        close(pipefds[j]);
+
+    /* ---- Parent: wait for ALL children ---- */
+    for (int i = 0; i < n_cmds; i++) {
+        if (pids[i] > 0)
+            waitpid(pids[i], NULL, 0);
     }
 }
 
@@ -246,24 +348,36 @@ void execute_line(const char *line, ShellState *state)
 
     for (int i = 0; i <= len; i++) {
         if (i == len || copy[i] == '&' || copy[i] == ';') {
-            /* Extract the substring [start, i) */
             char saved = copy[i];
             copy[i] = '\0';
 
             char *segment = copy + start;
 
-            /* Handle pipe groups: take only the first command
-             * in a pipeline for builtin dispatch. */
-            char *pipe_pos = strchr(segment, '|');
-            if (pipe_pos != NULL) {
-                *pipe_pos = '\0';
+            /* Count '|' operators to detect pipelines */
+            int n_pipes = 0;
+            for (char *p = segment; *p; p++) {
+                if (*p == '|') n_pipes++;
             }
 
-            /* Tokenise and dispatch */
-            char *argv[MAX_ARGS];
-            int argc = split_argv(segment, argv);
-            dispatch(argc, argv, state);
-            free_argv(argv, argc);
+            if (n_pipes == 0) {
+                /* Single command — builtins run in-process */
+                char *argv[MAX_ARGS];
+                int argc = split_argv(segment, argv);
+                dispatch(argc, argv, state);
+                free_argv(argv, argc);
+            } else {
+                /* Pipeline — split by '|' into stages */
+                char *stages[MAX_ARGS];
+                int n_stages = 0;
+                stages[n_stages++] = segment;
+                for (char *p = segment; *p; p++) {
+                    if (*p == '|') {
+                        *p = '\0';
+                        stages[n_stages++] = p + 1;
+                    }
+                }
+                run_pipeline(stages, n_stages, state);
+            }
 
             copy[i] = saved;
             start = i + 1;
