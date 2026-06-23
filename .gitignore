@@ -1,6 +1,1 @@
-# Build artifacts
-obj/
-shell.out
-
-# Runtime files
 .shell_history
