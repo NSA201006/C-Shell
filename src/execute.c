@@ -155,7 +155,8 @@ static int setup_redirections(int argc, char **argv)
             int fd = open(argv[i + 1],
                           O_WRONLY | O_CREAT | O_APPEND, 0644);
             if (fd < 0) {
-                perror(argv[i + 1]);
+                printf("Unable to create file for writing\n");
+                fflush(stdout);
                 return -1;
             }
             dup2(fd, STDOUT_FILENO);
@@ -166,7 +167,8 @@ static int setup_redirections(int argc, char **argv)
             int fd = open(argv[i + 1],
                           O_WRONLY | O_CREAT | O_TRUNC, 0644);
             if (fd < 0) {
-                perror(argv[i + 1]);
+                printf("Unable to create file for writing\n");
+                fflush(stdout);
                 return -1;
             }
             dup2(fd, STDOUT_FILENO);
