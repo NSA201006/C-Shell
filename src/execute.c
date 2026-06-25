@@ -16,6 +16,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "bg.h"
 #include "execute.h"
 #include "hop.h"
 #include "log.h"
@@ -333,12 +334,109 @@ static void run_pipeline(char **stages, int n_cmds, ShellState *state)
     }
 }
 
+/*
+ * extract_cmd_name — Get the first word of a segment for job reporting.
+ */
+static void extract_cmd_name(const char *seg, char *buf, size_t size)
+{
+    while (*seg && (*seg == ' ' || *seg == '\t'))
+        seg++;
+    size_t i = 0;
+    while (seg[i] && seg[i] != ' ' && seg[i] != '\t' &&
+           seg[i] != '|' && seg[i] != '<' && seg[i] != '>' &&
+           i < size - 1) {
+        buf[i] = seg[i];
+        i++;
+    }
+    buf[i] = '\0';
+}
+
+/*
+ * run_foreground — Execute a segment (single or pipeline) in foreground.
+ */
+static void run_foreground(char *segment, ShellState *state)
+{
+    int n_pipes = 0;
+    for (char *p = segment; *p; p++)
+        if (*p == '|') n_pipes++;
+
+    if (n_pipes == 0) {
+        char *argv[MAX_ARGS];
+        int argc = split_argv(segment, argv);
+        dispatch(argc, argv, state);
+        free_argv(argv, argc);
+    } else {
+        char *stages[MAX_ARGS];
+        int n_stages = 0;
+        stages[n_stages++] = segment;
+        for (char *p = segment; *p; p++) {
+            if (*p == '|') {
+                *p = '\0';
+                stages[n_stages++] = p + 1;
+            }
+        }
+        run_pipeline(stages, n_stages, state);
+    }
+}
+
+/*
+ * run_background — Fork and run a segment in the background.
+ *
+ * The child redirects stdin from /dev/null, then executes the
+ * segment (single command or pipeline).  The parent records the
+ * job and returns immediately.
+ */
+static void run_background(char *segment, ShellState *state)
+{
+    char cmd_name[256];
+    extract_cmd_name(segment, cmd_name, sizeof(cmd_name));
+
+    if (cmd_name[0] == '\0')
+        return;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* Child: no terminal input for background processes */
+        int devnull = open("/dev/null", O_RDONLY);
+        if (devnull >= 0) {
+            dup2(devnull, STDIN_FILENO);
+            close(devnull);
+        }
+
+        /* Count pipes to decide single vs pipeline */
+        int n_pipes = 0;
+        for (char *p = segment; *p; p++)
+            if (*p == '|') n_pipes++;
+
+        if (n_pipes == 0) {
+            /* Single command */
+            char *argv[MAX_ARGS];
+            int argc = split_argv(segment, argv);
+            run_in_child(argc, argv, state);
+            /* never returns */
+        } else {
+            /* Pipeline — run_pipeline forks its own children */
+            char *stages[MAX_ARGS];
+            int n_stages = 0;
+            stages[n_stages++] = segment;
+            for (char *p = segment; *p; p++) {
+                if (*p == '|') {
+                    *p = '\0';
+                    stages[n_stages++] = p + 1;
+                }
+            }
+            run_pipeline(stages, n_stages, state);
+            _exit(0);
+        }
+    } else if (pid > 0) {
+        bg_add_job(pid, cmd_name);
+    } else {
+        perror("fork");
+    }
+}
+
 void execute_line(const char *line, ShellState *state)
 {
-    /*
-     * Split the input by ';' and '&' to get individual command
-     * groups.  We work on a mutable copy of the line.
-     */
     char *copy = strdup(line);
     if (copy == NULL)
         return;
@@ -348,35 +446,29 @@ void execute_line(const char *line, ShellState *state)
 
     for (int i = 0; i <= len; i++) {
         if (i == len || copy[i] == '&' || copy[i] == ';') {
+            int background = (i < len && copy[i] == '&');
+
             char saved = copy[i];
             copy[i] = '\0';
 
             char *segment = copy + start;
 
-            /* Count '|' operators to detect pipelines */
-            int n_pipes = 0;
+            /* Check segment has content */
+            int has_content = 0;
             for (char *p = segment; *p; p++) {
-                if (*p == '|') n_pipes++;
+                if (*p != ' ' && *p != '\t' &&
+                    *p != '\n' && *p != '\r') {
+                    has_content = 1;
+                    break;
+                }
             }
 
-            if (n_pipes == 0) {
-                /* Single command — builtins run in-process */
-                char *argv[MAX_ARGS];
-                int argc = split_argv(segment, argv);
-                dispatch(argc, argv, state);
-                free_argv(argv, argc);
-            } else {
-                /* Pipeline — split by '|' into stages */
-                char *stages[MAX_ARGS];
-                int n_stages = 0;
-                stages[n_stages++] = segment;
-                for (char *p = segment; *p; p++) {
-                    if (*p == '|') {
-                        *p = '\0';
-                        stages[n_stages++] = p + 1;
-                    }
+            if (has_content) {
+                if (background) {
+                    run_background(segment, state);
+                } else {
+                    run_foreground(segment, state);
                 }
-                run_pipeline(stages, n_stages, state);
             }
 
             copy[i] = saved;

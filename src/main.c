@@ -22,6 +22,7 @@
 #include "parser.h"
 #include "execute.h"
 #include "log.h"
+#include "bg.h"
 
 int main(void)
 {
@@ -46,6 +47,9 @@ int main(void)
             printf("\n");
             break;
         }
+
+        /* Check for completed background jobs (D.2) */
+        bg_check_jobs();
 
         /* Skip empty / whitespace-only lines */
         {
