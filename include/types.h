@@ -20,6 +20,8 @@
 /* Maximum number of tokens in a single input line */
 #define MAX_TOKENS   512
 
+#define MAX_BG_JOBS  256
+
 /*
  * Token types produced by the tokeniser (parser.c).
  *

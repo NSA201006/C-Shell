@@ -11,9 +11,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 
+#include "types.h"
 #include "bg.h"
-
-#define MAX_BG_JOBS 256
 
 typedef struct {
     pid_t pid;
@@ -28,8 +27,7 @@ static int   next_job_num = 1;
 
 void bg_add_job(pid_t pid, const char *cmd_name)
 {
-    if (job_count >= MAX_BG_JOBS)
-        return;
+    if (job_count >= MAX_BG_JOBS) return;
 
     jobs[job_count].pid        = pid;
     jobs[job_count].cmd_name   = strdup(cmd_name);
@@ -48,7 +46,7 @@ void bg_check_jobs(void)
         if (!jobs[i].active)
             continue;
 
-        int   status;
+        int status;
         pid_t result = waitpid(jobs[i].pid, &status, WNOHANG);
 
         if (result == jobs[i].pid) {
