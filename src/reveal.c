@@ -128,6 +128,14 @@ void builtin_reveal(int argc, char **argv, ShellState *state)
         }
     }
 
+    /* If STDOUT is NOT a terminal screen (e.g., it is a pipe or file), 
+       force the -l flag ON so the output is strictly vertical. 
+       Fix for the pipe ex : reveal | wc -l */
+
+    if (!isatty(STDOUT_FILENO)) {
+        flag_l = 1;
+    }
+
     /* Too many path arguments */
     if (path_count > 1) {
         printf("reveal: Invalid Syntax!\n");
