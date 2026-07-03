@@ -23,6 +23,7 @@
 #include "execute.h"
 #include "log.h"
 #include "bg.h"
+#include "signals.h"
 
 int main(void)
 {
@@ -36,6 +37,9 @@ int main(void)
         perror("getcwd");
         return 1;
     }
+
+    /* Install signal handlers for Ctrl-C and Ctrl-Z */
+    setup_signal_handlers();
 
     /* ---- REPL loop ---- */
     for (;;) {
