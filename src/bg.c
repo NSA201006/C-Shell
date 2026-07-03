@@ -17,6 +17,7 @@
 
 #include "types.h"
 #include "bg.h"
+#include "signals.h"
 
 typedef struct {
     pid_t pid;
@@ -171,5 +172,151 @@ void builtin_ping(int argc, char **argv)
         printf("Sent signal %d to process with pid %d\n",
                signum, (int)pid);
     }
+    fflush(stdout);
+}
+
+/* ------------------------------------------------------------------ */
+/*  E.3 — Ctrl-Z (stopped job) and Ctrl-D (cleanup)                  */
+/* ------------------------------------------------------------------ */
+
+void bg_add_stopped_job(pid_t pid, const char *cmd_name)
+{
+    if (job_count >= MAX_BG_JOBS) return;
+
+    jobs[job_count].pid        = pid;
+    jobs[job_count].cmd_name   = strdup(cmd_name);
+    jobs[job_count].job_number = next_job_num++;
+    jobs[job_count].active     = 1;
+    jobs[job_count].stopped    = 1;
+
+    printf("[%d] Stopped %s [%d]\n",
+           jobs[job_count].job_number, cmd_name, (int)pid);
+    fflush(stdout);
+
+    job_count++;
+}
+
+void bg_kill_all(void)
+{
+    for (int i = 0; i < job_count; i++) {
+        if (!jobs[i].active)
+            continue;
+        kill(jobs[i].pid, SIGKILL);
+        waitpid(jobs[i].pid, NULL, 0);
+        free(jobs[i].cmd_name);
+        jobs[i].cmd_name = NULL;
+        jobs[i].active   = 0;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  E.4 — fg and bg                                                   */
+/* ------------------------------------------------------------------ */
+
+/*
+ * find_job — Find a job by job_number. Returns index or -1.
+ */
+static int find_job(int job_num)
+{
+    for (int i = 0; i < job_count; i++) {
+        if (jobs[i].active && jobs[i].job_number == job_num)
+            return i;
+    }
+    return -1;
+}
+
+/*
+ * find_most_recent — Find the most recently created active job.
+ */
+static int find_most_recent(void)
+{
+    for (int i = job_count - 1; i >= 0; i--) {
+        if (jobs[i].active)
+            return i;
+    }
+    return -1;
+}
+
+void builtin_fg(int argc, char **argv)
+{
+    int idx;
+
+    if (argc == 1) {
+        idx = find_most_recent();
+    } else {
+        int job_num = atoi(argv[1]);
+        idx = find_job(job_num);
+    }
+
+    if (idx < 0) {
+        printf("No such job\n");
+        return;
+    }
+
+    printf("%s\n", jobs[idx].cmd_name);
+    fflush(stdout);
+
+    /* Send SIGCONT if stopped */
+    if (jobs[idx].stopped) {
+        kill(-jobs[idx].pid, SIGCONT);
+        jobs[idx].stopped = 0;
+    }
+
+    /* Wait for job in foreground */
+    set_fg_pid(jobs[idx].pid);
+
+    int status;
+    waitpid(jobs[idx].pid, &status, WUNTRACED);
+
+    set_fg_pid(-1);
+
+    if (WIFSTOPPED(status)) {
+        /* Stopped again (Ctrl-Z) */
+        jobs[idx].stopped = 1;
+        printf("[%d] Stopped %s [%d]\n",
+               jobs[idx].job_number, jobs[idx].cmd_name,
+               (int)jobs[idx].pid);
+        fflush(stdout);
+    } else {
+        /* Terminated — remove from job list */
+        free(jobs[idx].cmd_name);
+        jobs[idx].cmd_name = NULL;
+        jobs[idx].active   = 0;
+    }
+}
+
+void builtin_bg(int argc, char **argv)
+{
+    int idx;
+
+    if (argc == 1) {
+        /* Find most recent stopped job */
+        idx = -1;
+        for (int i = job_count - 1; i >= 0; i--) {
+            if (jobs[i].active && jobs[i].stopped) {
+                idx = i;
+                break;
+            }
+        }
+    } else {
+        int job_num = atoi(argv[1]);
+        idx = find_job(job_num);
+    }
+
+    if (idx < 0) {
+        printf("No such job\n");
+        return;
+    }
+
+    if (!jobs[idx].stopped) {
+        printf("Job already running\n");
+        return;
+    }
+
+    /* Resume in background */
+    kill(-jobs[idx].pid, SIGCONT);
+    jobs[idx].stopped = 0;
+
+    printf("[%d] %s &\n", jobs[idx].job_number, jobs[idx].cmd_name);
     fflush(stdout);
 }

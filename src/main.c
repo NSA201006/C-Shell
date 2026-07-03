@@ -43,9 +43,12 @@ int main(void)
 
         char *line = read_input();
         if (line == NULL) {
-            /* EOF (Ctrl-D) — exit gracefully */
-            printf("\n");
-            break;
+            /* EOF (Ctrl-D) — kill all children, print logout, exit */
+            printf("\nlogout\n");
+            bg_kill_all();
+            free(state.shell_home);
+            free(state.prev_cwd);
+            return 0;
         }
 
         /* Check for completed background jobs (D.2) */

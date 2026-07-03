@@ -31,7 +31,8 @@ OBJS    = $(OBJDIR)/main.o \
           $(OBJDIR)/hop.o \
           $(OBJDIR)/reveal.o \
           $(OBJDIR)/log.o \
-          $(OBJDIR)/bg.o
+          $(OBJDIR)/bg.o \
+          $(OBJDIR)/signals.o
 
 TARGET  = shell.out
 
@@ -52,12 +53,13 @@ clean:
 	rm -f $(OBJS) $(TARGET)
 
 # Header dependencies
-$(OBJDIR)/main.o:    $(SRCDIR)/main.c    $(INCDIR)/types.h $(INCDIR)/prompt.h $(INCDIR)/input.h $(INCDIR)/parser.h $(INCDIR)/execute.h $(INCDIR)/log.h $(INCDIR)/bg.h
+$(OBJDIR)/main.o:    $(SRCDIR)/main.c    $(INCDIR)/types.h $(INCDIR)/prompt.h $(INCDIR)/input.h $(INCDIR)/parser.h $(INCDIR)/execute.h $(INCDIR)/log.h $(INCDIR)/bg.h $(INCDIR)/signals.h
 $(OBJDIR)/prompt.o:  $(SRCDIR)/prompt.c  $(INCDIR)/types.h $(INCDIR)/prompt.h
 $(OBJDIR)/input.o:   $(SRCDIR)/input.c   $(INCDIR)/input.h
 $(OBJDIR)/parser.o:  $(SRCDIR)/parser.c  $(INCDIR)/types.h $(INCDIR)/parser.h
-$(OBJDIR)/execute.o: $(SRCDIR)/execute.c $(INCDIR)/types.h $(INCDIR)/execute.h $(INCDIR)/hop.h $(INCDIR)/reveal.h $(INCDIR)/log.h $(INCDIR)/bg.h
+$(OBJDIR)/execute.o: $(SRCDIR)/execute.c $(INCDIR)/types.h $(INCDIR)/execute.h $(INCDIR)/hop.h $(INCDIR)/reveal.h $(INCDIR)/log.h $(INCDIR)/bg.h $(INCDIR)/signals.h
 $(OBJDIR)/hop.o:     $(SRCDIR)/hop.c     $(INCDIR)/types.h $(INCDIR)/hop.h
 $(OBJDIR)/reveal.o:  $(SRCDIR)/reveal.c  $(INCDIR)/types.h $(INCDIR)/reveal.h
 $(OBJDIR)/log.o:     $(SRCDIR)/log.c     $(INCDIR)/types.h $(INCDIR)/log.h $(INCDIR)/execute.h $(INCDIR)/parser.h
-$(OBJDIR)/bg.o:      $(SRCDIR)/bg.c      $(INCDIR)/bg.h
+$(OBJDIR)/bg.o:      $(SRCDIR)/bg.c      $(INCDIR)/types.h $(INCDIR)/bg.h
+$(OBJDIR)/signals.o: $(SRCDIR)/signals.c $(INCDIR)/signals.h
