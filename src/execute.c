@@ -23,6 +23,7 @@
 #include "log.h"
 #include "reveal.h"
 #include "types.h"
+#include "signals.h"
 
 /*
  * is_ws — Return non-zero if c is whitespace.
