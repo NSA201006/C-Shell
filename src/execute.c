@@ -212,6 +212,14 @@ static void run_in_child(int argc, char **argv, ShellState *state)
         builtin_log(exec_argc, exec_argv, state);
         _exit(0);
     }
+    if (strcmp(exec_argv[0], "activities") == 0) {
+        builtin_activities();
+        _exit(0);
+    }
+    if (strcmp(exec_argv[0], "ping") == 0) {
+        builtin_ping(exec_argc, exec_argv);
+        _exit(0);
+    }
 
     /* External command */
     execvp(exec_argv[0], exec_argv);
@@ -258,6 +266,10 @@ static void dispatch(int argc, char **argv, ShellState *state)
         builtin_reveal(argc, argv, state);
     } else if (strcmp(argv[0], "log") == 0) {
         builtin_log(argc, argv, state);
+    } else if (strcmp(argv[0], "activities") == 0) {
+        builtin_activities();
+    } else if (strcmp(argv[0], "ping") == 0) {
+        builtin_ping(argc, argv);
     } else {
         run_external(argc, argv, state);
     }
