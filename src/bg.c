@@ -14,11 +14,11 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "types.h"
 #include "bg.h"
 #include "signals.h"
-#include <errno.h>
 
 typedef struct {
     pid_t pid;
@@ -190,10 +190,10 @@ void bg_add_stopped_job(pid_t pid, const char *cmd_name)
     jobs[job_count].active     = 1;
     jobs[job_count].stopped    = 1;
 
-    printf("[%d] Stopped %s [%d]\n",
-           jobs[job_count].job_number, cmd_name, (int)pid);
+    printf("\n[%d] Stopped %s\n",
+           jobs[job_count].job_number, cmd_name);
     fflush(stdout);
-
+    
     job_count++;
 }
 
@@ -277,9 +277,8 @@ void builtin_fg(int argc, char **argv)
     if (WIFSTOPPED(status)) {
         /* Stopped again (Ctrl-Z) */
         jobs[idx].stopped = 1;
-        printf("[%d] Stopped %s [%d]\n",
-               jobs[idx].job_number, jobs[idx].cmd_name,
-               (int)jobs[idx].pid);
+        printf("\n[%d] Stopped %s\n",
+               jobs[idx].job_number, jobs[idx].cmd_name);
         fflush(stdout);
     } else {
         /* Terminated — remove from job list */

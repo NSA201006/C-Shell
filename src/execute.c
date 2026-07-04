@@ -274,7 +274,12 @@ static void run_external(int argc, char **argv, ShellState *state)
 
         if (w > 0 && WIFSTOPPED(status)) {
             /* Ctrl-Z: move to background as stopped */
-            bg_add_stopped_job(pid, exec_argv[0]);
+            char cmd_full[1024] = "";
+            for (int i = 0; i < argc; i++) {
+                strcat(cmd_full, argv[i]);
+                if (i < argc - 1) strcat(cmd_full, " ");
+            }
+            bg_add_stopped_job(pid, cmd_full);
         }
     } else {
         perror("fork");
