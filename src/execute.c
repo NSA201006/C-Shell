@@ -7,6 +7,7 @@
  * via fork + execvp.
  */
 
+#include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
@@ -24,6 +25,9 @@
 #include "reveal.h"
 #include "types.h"
 #include "signals.h"
+
+/* Forward declaration */
+static void extract_cmd_name(const char *seg, char *buf, size_t size);
 
 /*
  * is_ws — Return non-zero if c is whitespace.
@@ -254,8 +258,20 @@ static void run_external(int argc, char **argv, ShellState *state)
         run_in_child(argc, argv, state);
         /* never reached */
     } else if (pid > 0) {
+        set_fg_pid(pid);
+
         int status;
-        waitpid(pid, &status, 0);
+        pid_t w;
+        do {
+            w = waitpid(pid, &status, WUNTRACED);
+        } while (w < 0 && errno == EINTR);
+
+        set_fg_pid(-1);
+
+        if (w > 0 && WIFSTOPPED(status)) {
+            /* Ctrl-Z: move to background as stopped */
+            bg_add_stopped_job(pid, exec_argv[0]);
+        }
     } else {
         perror("fork");
     }
@@ -265,10 +281,27 @@ static void run_external(int argc, char **argv, ShellState *state)
  * dispatch — Run a single simple command (no pipes).
  *            Builtins run in the current process; externals are forked.
  */
+static int has_redir_tokens(int argc, char **argv)
+{
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "<") == 0 ||
+            strcmp(argv[i], ">") == 0 ||
+            strcmp(argv[i], ">>") == 0)
+            return 1;
+    }
+    return 0;
+}
+
 static void dispatch(int argc, char **argv, ShellState *state)
 {
     if (argc == 0)
         return;
+
+    /* If a builtin has redirection tokens, fork so redirections work */
+    if (has_redir_tokens(argc, argv)) {
+        run_external(argc, argv, state);
+        return;
+    }
 
     if (strcmp(argv[0], "hop") == 0) {
         builtin_hop(argc, argv, state);
@@ -353,28 +386,50 @@ static void run_pipeline(char **stages, int n_cmds, ShellState *state)
     for (int j = 0; j < 2 * n_pipes; j++)
         close(pipefds[j]);
 
-    /* ---- Parent: wait for ALL children ---- */
+    /* ---- Parent: track foreground and wait for ALL children ---- */
+    set_fg_pid(pids[0] > 0 ? pids[0] : -1);
+
+    int any_stopped = 0;
     for (int i = 0; i < n_cmds; i++) {
-        if (pids[i] > 0)
-            waitpid(pids[i], NULL, 0);
+        if (pids[i] > 0) {
+            int status;
+            pid_t w;
+            do {
+                w = waitpid(pids[i], &status, WUNTRACED);
+            } while (w < 0 && errno == EINTR);
+            if (w > 0 && WIFSTOPPED(status))
+                any_stopped = 1;
+        }
+    }
+
+    set_fg_pid(-1);
+
+    if (any_stopped) {
+        char cmd_name[256];
+        extract_cmd_name(stages[0], cmd_name, sizeof(cmd_name));
+        bg_add_stopped_job(pids[0], cmd_name);
     }
 }
 
 /*
- * extract_cmd_name — Get the first word of a segment for job reporting.
+ * extract_cmd_name — Get the trimmed segment for job reporting.
  */
 static void extract_cmd_name(const char *seg, char *buf, size_t size)
 {
+    /* Skip leading whitespace */
     while (*seg && (*seg == ' ' || *seg == '\t'))
         seg++;
-    size_t i = 0;
-    while (seg[i] && seg[i] != ' ' && seg[i] != '\t' &&
-           seg[i] != '|' && seg[i] != '<' && seg[i] != '>' &&
-           i < size - 1) {
-        buf[i] = seg[i];
-        i++;
-    }
-    buf[i] = '\0';
+
+    /* Find end (trim trailing whitespace) */
+    size_t len = strlen(seg);
+    while (len > 0 && (seg[len - 1] == ' ' || seg[len - 1] == '\t' ||
+                       seg[len - 1] == '\n' || seg[len - 1] == '\r'))
+        len--;
+
+    if (len >= size)
+        len = size - 1;
+    memcpy(buf, seg, len);
+    buf[len] = '\0';
 }
 
 /*
