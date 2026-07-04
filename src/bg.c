@@ -18,6 +18,7 @@
 #include "types.h"
 #include "bg.h"
 #include "signals.h"
+#include <errno.h>
 
 typedef struct {
     pid_t pid;
@@ -258,7 +259,7 @@ void builtin_fg(int argc, char **argv)
 
     /* Send SIGCONT if stopped */
     if (jobs[idx].stopped) {
-        kill(-jobs[idx].pid, SIGCONT);
+        kill(jobs[idx].pid, SIGCONT);
         jobs[idx].stopped = 0;
     }
 
@@ -266,7 +267,10 @@ void builtin_fg(int argc, char **argv)
     set_fg_pid(jobs[idx].pid);
 
     int status;
-    waitpid(jobs[idx].pid, &status, WUNTRACED);
+    pid_t w;
+    do {
+        w = waitpid(jobs[idx].pid, &status, WUNTRACED);
+    } while (w < 0 && errno == EINTR);
 
     set_fg_pid(-1);
 
@@ -314,7 +318,7 @@ void builtin_bg(int argc, char **argv)
     }
 
     /* Resume in background */
-    kill(-jobs[idx].pid, SIGCONT);
+    kill(jobs[idx].pid, SIGCONT);
     jobs[idx].stopped = 0;
 
     printf("[%d] %s &\n", jobs[idx].job_number, jobs[idx].cmd_name);

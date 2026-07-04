@@ -21,13 +21,17 @@ pid_t get_fg_pid(void)     { return (pid_t)fg_pid; }
 static void sigint_handler(int sig)
 {
     (void)sig;
-    /* Shell absorbs SIGINT — child (SIG_DFL) gets it from the terminal */
+    if (fg_pid > 0) {
+        kill(fg_pid, SIGINT);
+    }
 }
 
 static void sigtstp_handler(int sig)
 {
     (void)sig;
-    /* Shell absorbs SIGTSTP — child (SIG_DFL) gets it from the terminal */
+    if (fg_pid > 0) {
+        kill(fg_pid, SIGTSTP);
+    }
 }
 
 void setup_signal_handlers(void)
@@ -35,9 +39,8 @@ void setup_signal_handlers(void)
     struct sigaction sa;
     sigemptyset(&sa.sa_mask);
 
-    /* SIGINT: use SA_RESTART so getline etc. restart after Ctrl-C
-       when no foreground child is running */
-    sa.sa_flags = SA_RESTART;
+    /* SIGINT: NO SA_RESTART so getline returns EINTR on idle Ctrl-C */
+    sa.sa_flags = 0;
     sa.sa_handler = sigint_handler;
     sigaction(SIGINT, &sa, NULL);
 

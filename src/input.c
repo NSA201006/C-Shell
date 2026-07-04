@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "input.h"
+#include <errno.h>
 
 char *read_input(void)
 {
@@ -18,9 +19,16 @@ char *read_input(void)
     size_t  len  = 0;
     ssize_t nread;
 
+    errno = 0;
     nread = getline(&line, &len, stdin);
 
     if (nread == -1) {
+        if (errno == EINTR) {
+            printf("\n"); /* Fix prompt on same line */
+            clearerr(stdin);
+            if (line) free(line);
+            return strdup("");
+        }
         /* EOF or error */
         free(line);
         return NULL;
