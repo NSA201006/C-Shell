@@ -194,6 +194,10 @@ static int setup_redirections(int argc, char **argv)
  */
 static void run_in_child(int argc, char **argv, ShellState *state)
 {
+    /* Reset signal handlers to default in child */
+    signal(SIGINT, SIG_DFL);
+    signal(SIGTSTP, SIG_DFL);
+
     /* Set up file redirections (<, >, >>) */
     if (setup_redirections(argc, argv) != 0)
         _exit(1);
@@ -470,10 +474,12 @@ static void run_foreground(char *segment, ShellState *state)
 static void run_background(char *segment, ShellState *state)
 {
     char cmd_name[256];
-    extract_cmd_name(segment, cmd_name, sizeof(cmd_name));
+    extract_cmd_name(segment, cmd_name, sizeof(cmd_name) - 3); /* leave room for " &" */
 
     if (cmd_name[0] == '\0')
         return;
+
+    strcat(cmd_name, " &");
 
     pid_t pid = fork();
     if (pid == 0) {
